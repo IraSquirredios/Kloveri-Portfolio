@@ -1,0 +1,20 @@
+ARG BUILDER=node:24-alpine
+ARG APP_RUNNER=nginx:stable-alpine
+FROM ${BUILDER} AS build
+WORKDIR /app
+COPY portfolio_frontend/package*.json ./
+RUN npm ci
+COPY portfolio_frontend/ ./
+# ENV_FILE is copied by CI into this ignored, build-only file.
+# VITE_* values are public browser configuration, never passwords or access tokens.
+ENV VITE_API_URL=/api VITE_DIRECTORY_API_URL=/directory-api
+RUN npm run build
+
+FROM ${APP_RUNNER}
+RUN apk add --no-cache ca-certificates
+COPY deploy/portfolio.nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1/healthz || exit 1
+CMD ["nginx", "-g", "daemon off;"]

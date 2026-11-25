@@ -1,0 +1,172 @@
+variables:
+  NODE_VERSION: 'node:24-alpine'
+  NGINX_VERSION: 'nginx:stable-alpine'
+  GET_IP_SH: 'IyEvYmluL2Jhc2gKCmV4cG9ydCBhbGlhcz0ke0NJX1BST0pFQ1RfUEFUSF9TTFVHfQphbGlhc19hc19ieXRlYXJyYXk9JChlY2hvIC1uICRhbGlhcyB8IHNoYTI1NnN1bSB8IGhlYWQgLWMgOCB8IHh4ZCAtciAtcCB8IG9kIC1BbiAtdHUxIHwgdHIgJ1xuJyAnICcpCmFsaWFzX2FzX2J5dGVhcnJheT0oJGFsaWFzX2FzX2J5dGVhcnJheSkKYWxpYXNfYXNfYnl0ZWFycmF5WzBdPTEyNwpmaW5hbF9pcD0kKGVjaG8gJHthbGlhc19hc19ieXRlYXJyYXlbQF19IHwgYXdrICd7cHJpbnRmICIlZC4lZC4lZC4lZFxuIiwgJDEsICQyLCAkMywgJDR9JykKZWNobyAkZmluYWxfaXAKCg=='
+  HOST_MAIN_DIR: /srv/docker
+  HOST_PROJECT_DIR: ${HOST_MAIN_DIR}/${CI_PROJECT_PATH}
+  CONTAINER_NAME: ${CI_PROJECT_PATH_SLUG}
+  CONTAINER_IMAGE: ${CI_REGISTRY_IMAGE}:dev
+
+stages:
+  - preflight
+  - init
+  - build
+  - deploy
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "feat/portfolio-products-api"'
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+    - when: never
+
+# Never print secret values. Missing settings stop before any infrastructure changes.
+preflight:
+  stage: preflight
+  tags: [docker]
+  script:
+    - |
+      missing=0
+      for name in INIT_TOKEN SERVICE_DOMAIN ENV_FILE; do
+        if printenv "$name" | grep -q .; then
+          echo "$name is configured"
+        else
+          echo "Missing CI/CD variable: $name"
+          missing=1
+        fi
+      done
+      test "$missing" -eq 0
+    - |
+      set +x
+      code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --header "PRIVATE-TOKEN: $INIT_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/variables")
+      case "$code" in
+        200) echo 'INIT_TOKEN can access project CI/CD variables' ;;
+        401) echo 'INIT_TOKEN authentication failed (HTTP 401)'; exit 1 ;;
+        403|404) echo "INIT_TOKEN cannot manage CI/CD variables in this project (HTTP $code). Use a token with Maintainer access to this repository."; exit 1 ;;
+        *) echo "Cannot verify INIT_TOKEN access (HTTP $code)"; exit 1 ;;
+      esac
+    - test -f "$ENV_FILE"
+    - grep -Eq '^VITE_PROJECT_ID=.+$' "$ENV_FILE" || { echo 'ENV_FILE must define VITE_PROJECT_ID'; exit 1; }
+    - printf '%s' "$SERVICE_DOMAIN" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$'
+
+# Official internship environment from Wiki TestEnv, not the template's Sigma environment.
+init_vars:
+  stage: init
+  variables:
+    PROJECTS: $CI_PROJECT_ID
+    PRIVATE_TOKEN: $INIT_TOKEN
+  trigger:
+    project: cloveri.start/cicd/env-init
+    strategy: depend
+
+init_pipeline:
+  stage: init
+  tags: [docker]
+  script:
+    - echo CI_REGISTRY_IMAGE=$(echo "$CI_REGISTRY_IMAGE" | sed -r 's/(.*):8090(.*)/\1\2/') >> build.env
+    - echo CI_REGISTRY=$(echo "$CI_REGISTRY" | sed -r 's/(.*):8090(.*)/\1\2/') >> build.env
+    - echo SERVICE_IP=$(echo "$GET_IP_SH" | base64 -d | bash) >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+build-portfolio:
+  stage: build
+  tags: [docker]
+  script:
+    - cp "$ENV_FILE" portfolio_frontend/.env.production
+    - printf '%s' "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -f Dockerfile.portfolio --build-arg BUILDER="${DOCKER_HUB_MIRROR}${NODE_VERSION}" --build-arg APP_RUNNER="${DOCKER_HUB_MIRROR}${NGINX_VERSION}" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+    - docker run --rm "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" nginx -t
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  after_script:
+    - rm -f portfolio_frontend/.env.production
+
+# Manual until the target domain and test environment are confirmed.
+deploy-portfolio:
+  stage: deploy
+  tags: [docker]
+  when: manual
+  allow_failure: true
+  resource_group: portfolio-test
+  environment:
+    name: dev
+    url: https://$SERVICE_DOMAIN
+  script:
+    - |
+      set -eu
+      test -n "$SERVICE_DOMAIN"
+      test -f "$SSH_CONF"
+      test -n "$GATE_KEY"
+      test -n "$HOST_KEY"
+      test -n "$SERVICE_IP"
+      export IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+      export PORT="$SERVICE_IP:8080"
+      export CONTAINER_NAME="$CI_PROJECT_PATH_SLUG"
+      eval "$(ssh-agent -s)" > /dev/null
+      trap 'ssh-agent -k > /dev/null' EXIT
+      printf '%s' "$GATE_KEY" | base64 -d | ssh-add - > /dev/null 2>&1
+      printf '%s' "$HOST_KEY" | base64 -d | ssh-add - > /dev/null 2>&1
+      sed "s/{{APP}}/$CI_PROJECT_PATH_SLUG/g" deploy/compose.yml > /tmp/portfolio-compose.yml
+      sed "s/{{SERVICE_DOMAIN}}/$SERVICE_DOMAIN/g; s/{{SERVICE_IP}}/$SERVICE_IP/g" deploy/nginx-template.conf > /tmp/portfolio-nginx.conf
+      ssh -F "$SSH_CONF" deploy.host "mkdir -p '$HOST_PROJECT_DIR'"
+      rsync -az -e "ssh -F $SSH_CONF" /tmp/portfolio-compose.yml "deploy.host:$HOST_PROJECT_DIR/compose.yml"
+      printf 'IMAGE=%s\nCONTAINER_NAME=%s\nPORT=%s\n' "$IMAGE" "$CONTAINER_NAME" "$PORT" | ssh -F "$SSH_CONF" deploy.host "cat > '$HOST_PROJECT_DIR/.env'"
+      printf '%s' "$CI_REGISTRY_PASSWORD" | ssh -F "$SSH_CONF" deploy.host "sudo docker login -u '$CI_REGISTRY_USER' --password-stdin '$CI_REGISTRY'"
+      ssh -F "$SSH_CONF" deploy.host "cd '$HOST_PROJECT_DIR' && sudo docker compose pull && sudo docker compose up -d"
+      rsync -az -e "ssh -F $SSH_CONF" /tmp/portfolio-nginx.conf "deploy.host:$HOST_MAIN_DIR/nginx-host/sites-enabled/$CI_PROJECT_PATH_SLUG.conf"
+      ssh -F "$SSH_CONF" deploy.host "sh -s -- '$HOST_PROJECT_DIR' '$SERVICE_DOMAIN' '$CI_JOB_ID'" <<'ROUTES'
+      set -eu
+      project_dir=$1
+      domain=$2
+      job_id=$3
+      legacy=/srv/docker/nginx-host/sites-enabled/alexandr-kuznetsov-portfolio.conf
+      backup=
+      if test -f "$legacy" && awk -v d="$domain" '$1 == "server_name" && $2 == d ";" {found=1} END {exit !found}' "$legacy"; then
+        mkdir -p "$project_dir/route-backups"
+        backup="$project_dir/route-backups/alexandr-kuznetsov-portfolio-$job_id.conf"
+        mv "$legacy" "$backup"
+        echo 'Previous portfolio route backed up outside sites-enabled'
+      fi
+      if ! sudo docker exec nginx-host nginx -t; then
+        if test -n "$backup"; then mv "$backup" "$legacy"; fi
+        exit 1
+      fi
+      sudo docker exec nginx-host nginx -s reload
+      ROUTES
+      ssh -F "$SSH_CONF" deploy.host "sudo docker exec '$CI_PROJECT_PATH_SLUG' wget -q -O - http://127.0.0.1/healthz"
+
+inspect-portfolio-route:
+  stage: deploy
+  tags: [docker]
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      set -eu
+      eval "$(ssh-agent -s)" > /dev/null
+      trap 'ssh-agent -k > /dev/null' EXIT
+      printf '%s' "$GATE_KEY" | base64 -d | ssh-add - > /dev/null 2>&1
+      printf '%s' "$HOST_KEY" | base64 -d | ssh-add - > /dev/null 2>&1
+      ssh -F "$SSH_CONF" deploy.host "sh -s -- '$SERVICE_DOMAIN' '$CI_PROJECT_PATH_SLUG' '$SERVICE_IP'" <<'HOST'
+      domain=$1
+      container=$2
+      service_ip=$3
+      echo 'Matching application routes:'
+      for file in /srv/docker/nginx-host/sites-enabled/*.conf; do
+        if grep -qF "$domain" "$file"; then
+          printf 'Route file: %s\n' "$file"
+          grep -nE 'listen|server_name|proxy_pass' "$file"
+        fi
+      done
+      echo 'New application health:'
+      sudo docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container"
+      curl --noproxy '*' -sS --max-time 10 -w '\nHTTP %{http_code}\n' "http://$service_ip:8080/healthz"
+      echo 'Authentication proxy status:'
+      curl --noproxy '*' -sS --max-time 15 -o /dev/null -w 'HTTP %{http_code}\n' "http://$service_ip:8080/auth-api/docs" || true
+      echo 'Authentication upstream from container:'
+      sudo docker exec "$container" wget -S -O /dev/null -T 15 https://api.users.skroy.ru/docs 2>&1 | head -15 || true
+      echo 'Recent proxy connection errors (request details omitted):'
+      sudo docker logs --since 5m "$container" 2>&1 | sed -n '/\[error\]/s/, client:.*//p' | tail -10
+      echo 'Domain route health on test server:'
+      curl --noproxy '*' -sS --max-time 10 -H "Host: $domain" -w '\nHTTP %{http_code}\n' http://127.0.0.1:8000/healthz
+      HOST

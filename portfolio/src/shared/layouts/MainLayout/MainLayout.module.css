@@ -1,0 +1,16 @@
+.MainLayout {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 120px 1fr 270px;
+    /* min-height: 100vh; */
+}
+
+.content {
+    min-height: 100vh;
+}
+
+@media screen and (max-width: 480px) {
+    .MainLayout {
+        grid-template-rows: auto 1fr auto;
+    }
+}

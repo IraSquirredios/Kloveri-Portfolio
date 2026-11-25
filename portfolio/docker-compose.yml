@@ -1,0 +1,11 @@
+version: "3.4"
+
+services:
+  frontend:
+    image: docker.infra.cloveri.com/cloveri.start/portfolio/cloveri-start/cloveri:latest
+    ports:
+      - 6060:80
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure

@@ -1,0 +1,14 @@
+.git
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+**/*.local
+**/*.log
+**/*.tsbuildinfo
+**/work
+**/.DS_Store
+portfolio_frontend/assets/*.png
+
+# Only CI creates this build-time configuration; local env files stay excluded.
+!portfolio_frontend/.env.production
