@@ -3,17 +3,9 @@ import logo from '../assets/icons/icon-logo.svg';
 import categoryReset from '../assets/icons/icon-category-reset.svg';
 import type { Category, Product, IconName } from './productsData';
 
+import {api} from './api/client';
 import { loadProducts } from './api/products';
 import { loadCategories } from './api/categories';
-
-const demoDraft: Product = {
- product_name: 'Погладить котика',
- description: 'Демонстрационная карточка для проверки публикации и удаления.',
- status: 'Реализация',
- categoryIds: ['it'],
- icon: 'folder',
- published: false,
-};
 
 const paths: Record<IconName, string> = {
  grid: 'M3 3h6v6H3ZM15 3h6v6h-6ZM3 15h6v6H3ZM15 15h6v6h-6Z',
@@ -33,23 +25,18 @@ const paths: Record<IconName, string> = {
 };
 function Icon({ name }: { name: IconName }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>; }
 export default function ProductsPage({ email, onLogout, isAdmin = false }: { email: string; onLogout: () => void; isAdmin?: boolean }) {
+ const [editor,setEditor]=useState<{id?:string;title:string;description:string}|null>(null);
+ const [saveError,setSaveError]=useState('');
  const [loadError, setLoadError] = useState('');
  const [categories, setCategories] = useState<Category[]>([]);
  const [fetchVersion, setFetchVersion] = useState(0);
  const [productsLoading, setProductsLoading] = useState(true);
  const [selected, setSelected] = useState<string[]>([]);
- const [publication, setPublication] = useState<Record<string, boolean>>({});
- const [deleted, setDeleted] = useState<string[]>([]);
+ const [publication] = useState<Record<string, boolean>>({});
+ const [deleted] = useState<string[]>([]);
  const published = (p: Product) => publication[p.product_name] ?? p.published !== false;
- function changePublication(names: string[], value: boolean) {
-  setPublication(previous => ({ ...previous, ...Object.fromEntries(names.map(name => [name, value])) }));
-  setSelected([]);
- }
- function deleteProducts(names: string[]) {
-  if (!names.length || !window.confirm('Удалить выбранные продукты?')) return;
-  setDeleted(previous => [...previous, ...names]);
-  setSelected([]);
- }
+ async function changePublication(names:string[],value:boolean){try{for(const name of names){const p=products.find(p=>p.product_name===name);if(p?.id)await api.patch('/products/'+p.id,{published:value});}setSelected([]);setFetchVersion(v=>v+1);}catch{window.alert('Не удалось сохранить публикацию');}}
+ async function deleteProducts(names:string[]){if(!names.length||!window.confirm('Удалить выбранные продукты?'))return;try{for(const name of names){const p=products.find(p=>p.product_name===name);if(p?.id)await api.delete('/products/'+p.id);}setSelected([]);setFetchVersion(v=>v+1);}catch{window.alert('Не удалось удалить продукт');}}
  const [query, setQuery] = useState('');
  const [category, setCategory] = useState('');
  const [collapsed, setCollapsed] = useState(false);
@@ -94,13 +81,14 @@ export default function ProductsPage({ email, onLogout, isAdmin = false }: { ema
     <span className={`product-status ${isAdmin && !published(p) ? 'draft' : ['Реализован', 'Разработка MVP'].includes(p.status) ? 'done' : p.status === 'Остановлен' ? 'stopped' : ''}`}>{isAdmin && !published(p) ? 'Черновик' : p.status}</span>
     {isAdmin && <details className="product-menu" onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.open = false; }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.open = false; }}>
      <summary aria-label={`Действия: ${p.product_name}`}>⋮</summary>
-     <div><button type="button" onClick={e => { changePublication([p.product_name], !published(p)); e.currentTarget.closest('details')?.removeAttribute('open'); }}>{published(p) ? 'Снять с публикации' : 'Опубликовать'}</button><button type="button" onClick={() => deleteProducts([p.product_name])}>Удалить</button></div>
+     <div><button type="button" onClick={()=>{setSaveError('');setEditor({id:p.id,title:p.product_name,description:p.description});}}>Редактировать</button><button type="button" onClick={e => { changePublication([p.product_name], !published(p)); e.currentTarget.closest('details')?.removeAttribute('open'); }}>{published(p) ? 'Снять с публикации' : 'Опубликовать'}</button><button type="button" onClick={() => deleteProducts([p.product_name])}>Удалить</button></div>
     </details>}
    </div><p>{p.description}</p>
   </article>;
  }
  const draftSelection = selected.filter(name => products.some(p => p.product_name === name && !published(p)));
  return <div className={`products-page${isAdmin ? ' products-page--admin' : ''}${collapsed ? ' products-page--collapsed' : ''}${labelsHidden ? ' products-page--labels-hidden' : ''}`}>
+  {editor && <div className="loading-overlay"><form className="loading-card" style={{display:'block',width:'min(500px,94vw)',padding:24}} onSubmit={async e=>{e.preventDefault();try{const body={title:editor.title.trim(),description:editor.description};if(!body.title)return;if(editor.id)await api.patch('/products/'+editor.id,body);else await api.post('/products',{...body,category:'it',stage:'idea'});setEditor(null);setFetchVersion(v=>v+1);}catch{setSaveError('Не удалось сохранить продукт');}}}><h2>{editor.id?'Редактировать продукт':'Добавить продукт'}</h2><label>Название<input required maxLength={150} value={editor.title} onChange={e=>setEditor({...editor,title:e.target.value})}/></label><label>Описание<textarea maxLength={5000} value={editor.description} onChange={e=>setEditor({...editor,description:e.target.value})}/></label><p role="alert">{saveError}</p><button type="submit">Сохранить</button><button type="button" onClick={()=>setEditor(null)}>Отмена</button></form></div>}
   <aside id="products-sidebar" className="products-sidebar">
    <div className="products-brand"><img src={logo} alt="" /><span>Портфолио проектов<br />ГК Эйтика</span></div>
    <p className="account-email" title={email}>{email}</p>
@@ -116,12 +104,7 @@ export default function ProductsPage({ email, onLogout, isAdmin = false }: { ema
    <button className="products-back" onClick={() => section === 'Продукты' ? onLogout() : setSection('Продукты')}>‹ Назад</button>
    <div className="products-toolbar"><h1>{section}</h1>{section === 'Продукты' && (isAdmin ? <div className="admin-actions">
     <button type="button" aria-pressed={selected.length > 0} onClick={() => setSelected(previous => previous.length ? [] : filtered.map(product => product.product_name))}>Выбрать</button>
-    <button type="button" className="admin-add" onClick={() => {
-     const name = window.prompt('Название нового продукта');
-     if (!name?.trim()) return;
-     if (products.some(product => product.product_name === name.trim())) { window.alert('Продукт с таким названием уже существует'); return; }
-     setProducts(previous => [...previous, { ...demoDraft, product_name: name.trim(), description: 'Новый неопубликованный продукт.' }]);
-    }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Добавить</button>
+    <button type="button" className="admin-add" onClick={() => {setSaveError('');setEditor({title:'',description:''});}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Добавить</button>
    </div> : <div className="products-filters">
     <input type="search" aria-label="Поиск продуктов" placeholder="Поиск" value={query} onChange={e => setQuery(e.target.value)} />
     <div className={`category-filter${category ? ' category-filter--selected' : ''}`}><details className="category-dropdown" onKeyDown={e => { if (e.key === 'Escape') { e.currentTarget.open = false; e.currentTarget.querySelector('summary')?.focus(); } }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.open = false; }}>

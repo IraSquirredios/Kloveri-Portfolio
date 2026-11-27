@@ -6,8 +6,8 @@ import close from '../assets/icons/icon-close.svg';
 import closeBlack from '../assets/icons/icon-close-black.svg';
 import ProductsPage from './ProductsPage';
 import './styles/products.scss';
-import { hasAccessToken, setAccessToken } from './api/client';
-import { signIn, signInErrorMessage } from './api/auth';
+import { api, hasAccessToken, setAccessToken } from './api/client';
+import { signIn, signUp, signInErrorMessage } from './api/auth';
 import axios from 'axios';
 
 export default function App() {
@@ -17,6 +17,7 @@ export default function App() {
     window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);
+  const [register, setRegister] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loginMessage, setLoginMessage] = useState('');
   const [email, setEmail] = useState('');
@@ -37,7 +38,7 @@ export default function App() {
     if (!validEmail || !password) return;
     setLoading(true);
     try {
-      await signIn(email.trim(), password);
+      await (register ? signUp : signIn)(email.trim(), password);
       setPassword('');
       window.location.hash = 'products';
       setPage('products');
@@ -51,7 +52,8 @@ export default function App() {
     }
   }
 
-  if (page === 'products') return <ProductsPage email={email.trim().toLowerCase() === 'demo_focus' ? 'pochta@mail.ru' : email || 'pochta@mail.ru'} onLogout={() => {
+  if (page === 'products') return <ProductsPage isAdmin={true} email={email.trim().toLowerCase() === 'demo_focus' ? 'pochta@mail.ru' : email || 'pochta@mail.ru'} onLogout={async () => {
+    try { await api.post('/auth/logout'); } catch { /* Local logout still clears the session. */ }
     setAccessToken(null);
     window.location.hash = '';
     setPage('login');
@@ -73,7 +75,7 @@ export default function App() {
           <span>Портфолио проектов<br />ГК Эйтика</span>
         </a>
         <form className="login-form" onSubmit={submit} noValidate>
-          <h1>Введите учётные данные</h1>
+          <h1>{register ? 'Создать аккаунт' : 'Введите учётные данные'}</h1>
           <div className={`form-field${emailError ? " form-field--error" : ""}`}>
             <label htmlFor="email">Логин или email</label>
             <div className="email-input">
@@ -90,7 +92,7 @@ export default function App() {
             </div>
             {passwordError && <p id="password-error" className="field-error">{passwordError}</p>}
           </div>
-          <button className="login-button" type="submit" disabled={!validEmail || !password || authError || loading}>Войти</button>
+          <button className="login-button" type="submit" disabled={!validEmail || !password || authError || loading}>{register ? 'Зарегистрироваться' : 'Войти'}</button><button type="button" onClick={() => setRegister(!register)}>{register ? 'Уже есть аккаунт' : 'Создать аккаунт'}</button>
         </form>
       </section>
       <div className="login-image" role="img" aria-label="Папки проектов на полках" />

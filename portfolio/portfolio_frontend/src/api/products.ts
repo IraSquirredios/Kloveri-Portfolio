@@ -10,7 +10,7 @@ export type PlatformProduct = {
  status: string | null;
 };
 
-type ProductResponse = { data: PlatformProduct[] | null };
+
 
 const stageLabels: Record<string, string> = {
  idea: 'Идея', mvp_development: 'Разработка MVP',
@@ -43,17 +43,8 @@ export function mapProducts(items: PlatformProduct[]): { products: Product[]; ca
 }
 
 export async function loadProducts(signal: AbortSignal) {
- const items: PlatformProduct[] = [];
- const perPage = 50;
- // Continue until a short page; the last full page may need an extra request.
- for (let page = 1; ; page++) {
-  const response = await api.get<ProductResponse>('/account/my/products/', {
-   params: { page, per_page: perPage }, signal,
-  });
-  const pageItems = response.data?.data;
-  if (pageItems !== null && !Array.isArray(pageItems)) throw new Error('Неверный формат ответа API продуктов.');
-  items.push(...(pageItems || []));
-  if (!pageItems || pageItems.length < perPage) break;
- }
- return mapProducts(items);
+ const r=await api.get('/products',{signal});
+ const raw=r.data.data as {id:string;title:string;description:string;stage:string;category:string;published:number}[];
+ const mapped=mapProducts(raw.map(p=>({product_id:p.id,title:p.title,description:{preview:p.description},stage:p.stage,status:null,categories:[{title:p.category,value:p.category}]})));
+ return {...mapped,products:mapped.products.map(p=>({...p,published:Boolean(raw.find(item=>item.id===p.id)?.published)}))};
 }
