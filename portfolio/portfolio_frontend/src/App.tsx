@@ -75,7 +75,7 @@ export default function App() {
           <span>Портфолио проектов<br />ГК Эйтика</span>
         </a>
         <form className="login-form" onSubmit={submit} noValidate>
-          <h1>{register ? 'Создать аккаунт' : 'Введите учётные данные'}</h1>
+          {import.meta.env.VITE_DEMO==='true'&&<><p>Демо: изменения сохраняются только в этом браузере.</p><button type="button" className="login-button" onClick={()=>{setAccessToken('demo-browser');setEmail('demo@example.com');window.location.hash='products';setPage('products')}}>Посмотреть демо</button></>}<h1>{register ? 'Создать аккаунт' : 'Введите учётные данные'}</h1>
           <div className={`form-field${emailError ? " form-field--error" : ""}`}>
             <label htmlFor="email">Логин или email</label>
             <div className="email-input">

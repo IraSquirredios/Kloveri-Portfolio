@@ -1,5 +1,14 @@
 # Портфолио Cloveri Start / Cloveri Start Portfolio
 
+## Онлайн-демо / Live demo
+
+[Открыть демо](https://kloveri-ira-demo.wakingbun2.chatgpt.site)
+
+Нажмите «Посмотреть демо». Тестовые данные и изменения хранятся только в вашем браузере; регистрация не нужна. Серверная версия доступна при локальном запуске.
+
+Сборка демо: `npm run build:demo` из папки фронтенда.
+
+
 Каталог продуктов Cloveri Start из GitLab.
 
 - `portfolio/portfolio_frontend/` — актуальный React/TypeScript интерфейс.
